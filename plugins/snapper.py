@@ -31,16 +31,17 @@ class Snapper(dnf.Plugin):
     def __init__(self, base, cli):
         self.base = base
         self.description = " ".join(sys.argv)
-        self._pre_snap_created = False
         self._snapper = None
-        self._pre_snap_number = None
-        self._snapper_config = "root"
+        self._snapper_configs = {}
 
     def config(self):
         conf = self.read_config(self.base.conf)
 
-        if conf.has_section("main") and conf.has_option("main", "snapper_config"):
-            self._snapper_config = conf.get("main", "snapper_config")
+        if conf.has_section("main"):
+            if conf.has_option("main", "snapper_configs"):
+                configs = conf.get("main", "snapper_configs").split()
+                self._snapper_configs = dict.fromkeys(configs, None)
+                logger.debug("snapper:" + _("configs: %s"), self._snapper_configs)
 
     def pre_transaction(self):
         if not self.base.transaction:
@@ -57,43 +58,46 @@ class Snapper(dnf.Plugin):
             )
             return
 
-        try:
-            logger.debug(
-                "snapper: " + _("creating pre_snapshot")
-            )
-            self._pre_snap_number = self._snapper.CreatePreSnapshot(self._snapper_config,
-                                                                    self.description,
-                                                                    "number", {})
-            self._pre_snap_created = True
-            logger.debug(
-                "snapper: " + _("created pre_snapshot %d"), self._pre_snap_number
-            )
-        except DBusException as e:
-            logger.critical(
-                "snapper: " + _("creating pre_snapshot failed: %s"), e
-            )
+        for config in self._snapper_configs.keys():
+            try:
+                logger.debug(
+                    "snapper: " + _("creating pre_snapshot for %s"), config
+                )
+                pre_snap_number = self._snapper.CreatePreSnapshot(config,
+                                                                  self.description,
+                                                                  "number", {})
+                self._snapper_configs[config] = pre_snap_number
+                logger.debug(
+                    "snapper: " + _("created pre_snapshot %d"), pre_snap_number
+                )
+            except DBusException as e:
+                logger.critical(
+                    "snapper: " + _("creating pre_snapshot failed: %s"), e
+                )
 
     def transaction(self):
         if not self.base.transaction:
             return
 
-        if not self._pre_snap_created:
-            logger.debug(
-                "snapper: " + _("skipping post_snapshot because creation of pre_snapshot failed")
-            )
-            return
+        for (config, pre_snap_number) in self._snapper_configs.items():
+            if pre_snap_number is None:
+                logger.debug(
+                    "snapper: " + _("skipping post_snapshot for %s because creation of pre_snapshot failed"), config
+                )
+                continue
 
-        try:
-            logger.debug(
-                "snapper: " + _("creating post_snapshot")
-            )
-            snap_post_number = self._snapper.CreatePostSnapshot(self._snapper_config,
-                                                                self._pre_snap_number,
-                                                                self.description, "number", {})
-            logger.debug(
-                "snapper: " + _("created post_snapshot %d"), snap_post_number
-            )
-        except DBusException as e:
-            logger.critical(
-                "snapper: " + _("creating post_snapshot failed: %s"), e
-            )
+            try:
+                logger.debug(
+                    "snapper: " + _("creating post_snapshot for %s")
+                )
+                snap_post_number = self._snapper.CreatePostSnapshot(config,
+                                                                    pre_snap_number,
+                                                                    self.description,
+                                                                    "number", {})
+                logger.debug(
+                    "snapper: " + _("created post_snapshot %d"), snap_post_number
+                )
+            except DBusException as e:
+                logger.critical(
+                    "snapper: " + _("creating post_snapshot failed: %s"), e
+                )
